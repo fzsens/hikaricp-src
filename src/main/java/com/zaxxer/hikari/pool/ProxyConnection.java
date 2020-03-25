@@ -223,6 +223,7 @@ public abstract class ProxyConnection implements Connection
       if (size > 0) {
          for (int i = 0; i < size && delegate != ClosedConnection.CLOSED_CONNECTION; i++) {
             try (Statement ignored = openStatements.get(i)) {
+               // 遍历所有打开的语句
                // automatic resource cleanup
             }
             catch (SQLException e) {
@@ -242,11 +243,13 @@ public abstract class ProxyConnection implements Connection
    //              "Overridden" java.sql.Connection Methods
    // **********************************************************************
 
+   // 通过 inheritDoc 可以继承注释，归还 Connection
    /** {@inheritDoc} */
    @Override
    public final void close() throws SQLException
    {
       // Closing statements can cause connection eviction, so this must run before the conditional below
+      // 关闭语句可能导致连接被驱逐，因此优先执行
       closeStatements();
 
       if (delegate != ClosedConnection.CLOSED_CONNECTION) {
@@ -254,6 +257,7 @@ public abstract class ProxyConnection implements Connection
 
          try {
             if (isCommitStateDirty && !isAutoCommit) {
+               // 脏提交/非自动提交，进行回滚
                delegate.rollback();
                lastAccess = currentTime();
                LOGGER.debug("{} - Executed rollback on connection {} due to dirty commit state on close().", poolEntry.getPoolName(), delegate);
@@ -273,7 +277,13 @@ public abstract class ProxyConnection implements Connection
             }
          }
          finally {
+            // 调用 PoolEntry 的 recycle 方法（delegate 使用一个已经关闭连接的代理，不能操作数据库）
             delegate = ClosedConnection.CLOSED_CONNECTION;
+            // poolEntry 返回到 HikariPool 中
+            // 存在疑问，poolEntry 和 delegate 的关系是什么？
+               // 1. 在创建 poolEntry 的时候，delegate 和 poolEntry 中的 connection 是相同的
+               // 2. 在关闭 poolEntry 的时候，poolEntry 中的 connection 还是保持和数据库之间的连接，但是 delegate 设置为一个 CLOSED_CONNECTION
+               // 3. 最后调用 ConcurrentBag.requite 方法，归还 poolEntry
             poolEntry.recycle(lastAccess);
          }
       }
@@ -469,6 +479,7 @@ public abstract class ProxyConnection implements Connection
       return iface.isInstance(delegate) || (delegate != null && delegate.isWrapperFor(iface));
    }
 
+   // 连接池中的链接，关闭的时候是返回到连接池，如果要真实关闭使用这个方法
    /** {@inheritDoc} */
    @Override
    @SuppressWarnings("unchecked")

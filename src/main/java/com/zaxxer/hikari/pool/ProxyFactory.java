@@ -24,6 +24,8 @@ import com.zaxxer.hikari.util.FastList;
  * A factory class that produces proxies around instances of the standard
  * JDBC interfaces.
  *
+ * 定义了 jdbc 的核心接口，实现的逻辑，是在编译时候，调用 JavassistProxyFactory 生成
+ *
  * @author Brett Wooldridge
  */
 @SuppressWarnings("unused")
@@ -48,6 +50,7 @@ public final class ProxyFactory
    static ProxyConnection getProxyConnection(final PoolEntry poolEntry, final Connection connection, final FastList<Statement> openStatements, final ProxyLeakTask leakTask, final long now, final boolean isReadOnly, final boolean isAutoCommit)
    {
       // Body is replaced (injected) by JavassistProxyFactory
+      // HikariProxyConnection
       throw new IllegalStateException("You need to run the CLI build and you need target/classes in your classpath to run.");
    }
 

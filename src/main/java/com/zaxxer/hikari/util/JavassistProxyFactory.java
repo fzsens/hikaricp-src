@@ -67,6 +67,12 @@ public final class JavassistProxyFactory
       modifyProxyFactory();
    }
 
+   /**
+    * 修改 ProxyFactory 中的方法体
+    * @throws NotFoundException
+    * @throws CannotCompileException
+    * @throws IOException
+    */
    private static void modifyProxyFactory() throws NotFoundException, CannotCompileException, IOException {
       System.out.println("Generating method bodies for com.zaxxer.hikari.proxy.ProxyFactory");
 
@@ -102,6 +108,7 @@ public final class JavassistProxyFactory
    }
 
    /**
+    * 生成代理类，使用 javassit 速度相比 jdk 更快，字节码也更加精简
     *  Generate Javassist Proxy Classes
     */
    private static <T> void generateProxyClass(Class<T> primaryInterface, String superClassName, String methodBody) throws Exception

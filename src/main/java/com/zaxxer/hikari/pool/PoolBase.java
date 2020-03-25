@@ -158,6 +158,7 @@ abstract class PoolBase
             final int validationSeconds = (int) Math.max(1000L, validationTimeout) / 1000;
 
             if (isUseJdbc4Validation) {
+               // jdbc4 直接使用 ping
                return connection.isValid(validationSeconds);
             }
 

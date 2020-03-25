@@ -78,6 +78,7 @@ public class HikariDataSource extends HikariConfig implements DataSource, Closea
       configuration.copyStateTo(this);
 
       LOGGER.info("{} - Starting...", configuration.getPoolName());
+      // 直接初始化 eager load
       pool = fastPathPool = new HikariPool(this);
       LOGGER.info("{} - Start completed.", configuration.getPoolName());
 
@@ -102,6 +103,7 @@ public class HikariDataSource extends HikariConfig implements DataSource, Closea
 
       // See http://en.wikipedia.org/wiki/Double-checked_locking#Usage_in_Java
       HikariPool result = pool;
+      // 标准的 dcl 双重检查锁
       if (result == null) {
          synchronized (this) {
             result = pool;

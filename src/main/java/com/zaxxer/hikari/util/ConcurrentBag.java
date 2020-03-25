@@ -43,6 +43,8 @@ import org.slf4j.LoggerFactory;
 import com.zaxxer.hikari.util.ConcurrentBag.IConcurrentBagEntry;
 
 /**
+ * 在行为上，表现如同 BlockingQueue，使用 threadLocal 构建一个无锁的环境，性能相比较好
+ *
  * This is a specialized concurrent bag that achieves superior performance
  * to LinkedBlockingQueue and LinkedTransferQueue for the purposes of a
  * connection pool.  It uses ThreadLocal storage when possible to avoid
@@ -66,14 +68,25 @@ public class ConcurrentBag<T extends IConcurrentBagEntry> implements AutoCloseab
 {
    private static final Logger LOGGER = LoggerFactory.getLogger(ConcurrentBag.class);
 
+   // 线程之间共享数据，使用类似 queue-stealing 的技术，可以出借
    private final CopyOnWriteArrayList<T> sharedList;
+
    private final boolean weakThreadLocals;
 
+   // 线程私有
    private final ThreadLocal<List<Object>> threadList;
+
+   /**
+    * 这两个核心变量，一个线程独占，一个线程共享，都是局部私有变量
+    */
    private final IBagStateListener listener;
    private final AtomicInteger waiters;
    private volatile boolean closed;
 
+   // 用于，存中资源等待线程时的第一手资源交换
+   // 本身是一个无存储空间的堵塞队列，使用在生产者和消费者中进行消息同步
+   // 效率会高于 ArrayBlockingQueue 和 LinkedBlockingQueue
+   // 本身没有存储空间，因此一个 put 需要对应一个 take/poll
    private final SynchronousQueue<T> handoffQueue;
 
    public interface IConcurrentBagEntry
@@ -102,7 +115,7 @@ public class ConcurrentBag<T extends IConcurrentBagEntry> implements AutoCloseab
    {
       this.listener = listener;
       this.weakThreadLocals = useWeakThreadLocals();
-
+      // 使用公平队列，队列先进先出
       this.handoffQueue = new SynchronousQueue<>(true);
       this.waiters = new AtomicInteger();
       this.sharedList = new CopyOnWriteArrayList<>();
@@ -115,6 +128,8 @@ public class ConcurrentBag<T extends IConcurrentBagEntry> implements AutoCloseab
    }
 
    /**
+    * 资源借用
+    *
     * The method will borrow a BagEntry from the bag, blocking for the
     * specified timeout if none are available.
     *
@@ -126,6 +141,7 @@ public class ConcurrentBag<T extends IConcurrentBagEntry> implements AutoCloseab
    public T borrow(long timeout, final TimeUnit timeUnit) throws InterruptedException
    {
       // Try the thread-local list first
+      // 先从线程变量中读取数据
       final List<Object> list = threadList.get();
       for (int i = list.size() - 1; i >= 0; i--) {
          final Object entry = list.remove(i);
@@ -137,11 +153,14 @@ public class ConcurrentBag<T extends IConcurrentBagEntry> implements AutoCloseab
       }
 
       // Otherwise, scan the shared list ... then poll the handoff queue
+      // 等待线程增加 1
       final int waiting = waiters.incrementAndGet();
       try {
+         // 如果没有本地变量，变量共享列表
          for (T bagEntry : sharedList) {
             if (bagEntry.compareAndSet(STATE_NOT_IN_USE, STATE_IN_USE)) {
                // If we may have stolen another waiter's connection, request another bag add.
+               // 获取了其他线程的资源，并且还有等待线程的时候，添加一个 bag 到 concurrentBag 中
                if (waiting > 1) {
                   listener.addBagItem(waiting - 1);
                }
@@ -153,6 +172,7 @@ public class ConcurrentBag<T extends IConcurrentBagEntry> implements AutoCloseab
 
          timeout = timeUnit.toNanos(timeout);
          do {
+            // 等待资源添加/释放
             final long start = currentTime();
             final T bagEntry = handoffQueue.poll(timeout, NANOSECONDS);
             if (bagEntry == null || bagEntry.compareAndSet(STATE_NOT_IN_USE, STATE_IN_USE)) {
@@ -180,12 +200,16 @@ public class ConcurrentBag<T extends IConcurrentBagEntry> implements AutoCloseab
     */
    public void requite(final T bagEntry)
    {
+      // 修改状态
       bagEntry.setState(STATE_NOT_IN_USE);
 
+      //判断释放有线程在等待
       for (int i = 0; waiters.get() > 0; i++) {
+         // 如果有等待线程，直接 handoff 资源
          if (bagEntry.getState() != STATE_NOT_IN_USE || handoffQueue.offer(bagEntry)) {
             return;
          }
+         // 迭代 256 次请求线程，就进入 10 微秒的休眠，和 yield 相比，parkNanos 会无条件取消调度线程
          else if ((i & 0xff) == 0xff) {
             parkNanos(MICROSECONDS.toNanos(10));
          }
@@ -194,13 +218,18 @@ public class ConcurrentBag<T extends IConcurrentBagEntry> implements AutoCloseab
          }
       }
 
+      // 添加资源到本地线程变量
       final List<Object> threadLocalList = threadList.get();
       if (threadLocalList.size() < 50) {
+         // 如果是一个可以重启、重新部署的环境中运行（Tomcat/Jboss），使用 WeakReferences 来避免内存泄漏
+         // 否则不使用
          threadLocalList.add(weakThreadLocals ? new WeakReference<>(bagEntry) : bagEntry);
       }
    }
 
    /**
+    * 添加对象刀 bag 中，提供给其他人借用
+    *
     * Add a new object to the bag for others to borrow.
     *
     * @param bagEntry an object to add to the bag
@@ -212,8 +241,10 @@ public class ConcurrentBag<T extends IConcurrentBagEntry> implements AutoCloseab
          throw new IllegalStateException("ConcurrentBag has been closed, ignoring add()");
       }
 
+      // 新增的资源优先放入 copyOnWriteArrayList
       sharedList.add(bagEntry);
 
+      // 自旋锁，直到资源被取走，或者没有其他线程在等待资源
       // spin until a thread takes it or none are waiting
       while (waiters.get() > 0 && bagEntry.getState() == STATE_NOT_IN_USE && !handoffQueue.offer(bagEntry)) {
          yield();
@@ -221,6 +252,8 @@ public class ConcurrentBag<T extends IConcurrentBagEntry> implements AutoCloseab
    }
 
    /**
+    * 从 bag 中删除一个资源
+    *
     * Remove a value from the bag.  This method should only be called
     * with objects obtained by <code>borrow(long, TimeUnit)</code> or <code>reserve(T)</code>
     *
@@ -231,6 +264,7 @@ public class ConcurrentBag<T extends IConcurrentBagEntry> implements AutoCloseab
     */
    public boolean remove(final T bagEntry)
    {
+      // 对象不能正在使用
       if (!bagEntry.compareAndSet(STATE_IN_USE, STATE_REMOVED) && !bagEntry.compareAndSet(STATE_RESERVED, STATE_REMOVED) && !closed) {
          LOGGER.warn("Attempt to remove an object from the bag that was not borrowed or reserved: {}", bagEntry);
          return false;
@@ -284,6 +318,8 @@ public class ConcurrentBag<T extends IConcurrentBagEntry> implements AutoCloseab
    }
 
    /**
+    *
+    * 修改状态为保留（不可用）
     * The method is used to make an item in the bag "unavailable" for
     * borrowing.  It is primarily used when wanting to operate on items
     * returned by the <code>values(int)</code> method.  Items that are
