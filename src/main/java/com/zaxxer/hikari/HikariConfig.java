@@ -45,6 +45,10 @@ import static com.zaxxer.hikari.util.UtilityElf.safeIsAssignableFrom;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
+/**
+ * 从初始化大纲开始
+ * 通过参数配置逐个分析了了解
+ */
 @SuppressWarnings({"SameParameterValue", "unused"})
 public class HikariConfig implements HikariConfigMXBean
 {
@@ -60,11 +64,12 @@ public class HikariConfig implements HikariConfigMXBean
    private static boolean unitTest = false;
 
    // Properties changeable at runtime through the HikariConfigMXBean
-   //
+   // 可变参数
    private volatile String catalog;
    private volatile long connectionTimeout;
    private volatile long validationTimeout;
    private volatile long idleTimeout;
+   //
    private volatile long leakDetectionThreshold;
    private volatile long maxLifetime;
    private volatile int maxPoolSize;
@@ -73,7 +78,7 @@ public class HikariConfig implements HikariConfigMXBean
    private volatile String password;
 
    // Properties NOT changeable at runtime
-   //
+   // 不可变参数
    private long initializationFailTimeout;
    private String connectionInitSql;
    private String connectionTestQuery;
@@ -1011,6 +1016,9 @@ public class HikariConfig implements HikariConfigMXBean
       }
    }
 
+   /**
+    * 校验数据有效性
+    */
    private void validateNumerics()
    {
       if (maxLifetime != 0 && maxLifetime < SECONDS.toMillis(30)) {

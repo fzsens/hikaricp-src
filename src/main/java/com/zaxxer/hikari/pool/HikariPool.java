@@ -179,6 +179,7 @@ public final class HikariPool extends PoolBase implements HikariPoolMXBean, IBag
     */
    public Connection getConnection(final long hardTimeout) throws SQLException
    {
+      // 如果suspend datasource ，那么 getConnection 会暂停在这个地方等待释放
       suspendResumeLock.acquire();
       final long startTime = currentTime();
 
@@ -193,7 +194,7 @@ public final class HikariPool extends PoolBase implements HikariPoolMXBean, IBag
             final long now = currentTime();
             // 连接有效性验证
             if (poolEntry.isMarkedEvicted() || (elapsedMillis(poolEntry.lastAccessed, now) > aliveBypassWindowMs && !isConnectionAlive(poolEntry.connection))) {
-               // 失效之后关闭
+               // 失效或者被标记为删除之后关闭
                closeConnection(poolEntry, poolEntry.isMarkedEvicted() ? EVICTED_CONNECTION_MESSAGE : DEAD_CONNECTION_MESSAGE);
                // 设置超时，超时范围内会再次尝试获取
                timeout = hardTimeout - elapsedMillis(startTime);
@@ -624,6 +625,7 @@ public final class HikariPool extends PoolBase implements HikariPoolMXBean, IBag
     * "Soft" evict a Connection (/PoolEntry) from the pool.  If this method is being called by the user directly
     * through {@link com.zaxxer.hikari.HikariDataSource#evictConnection(Connection)} then {@code owner} is {@code true}.
     *
+    * 如果拥有这个 Connection，或者 Connection 处于闲置状态，直接关闭；否则标记为已经被 evicted 当尝试从 pool 中再次获取的时候，会被关闭
     * If the caller is the owner, or if the Connection is idle (i.e. can be "reserved" in the {@link ConcurrentBag}),
     * then we can close the connection immediately.  Otherwise, we leave it "marked" for eviction so that it is evicted
     * the next time someone tries to acquire it from the pool.
@@ -635,7 +637,9 @@ public final class HikariPool extends PoolBase implements HikariPoolMXBean, IBag
     */
    private boolean softEvictConnection(final PoolEntry poolEntry, final String reason, final boolean owner)
    {
+      // 标记为 evicted
       poolEntry.markEvicted();
+      // 持有或者空闲，直接关闭
       if (owner || connectionBag.reserve(poolEntry)) {
          // 内部关闭 Connection 的方法
          closeConnection(poolEntry, reason);

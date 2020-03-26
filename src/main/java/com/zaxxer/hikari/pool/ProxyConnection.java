@@ -253,6 +253,7 @@ public abstract class ProxyConnection implements Connection
       closeStatements();
 
       if (delegate != ClosedConnection.CLOSED_CONNECTION) {
+         // 取消链接泄漏监测
          leakTask.cancel();
 
          try {

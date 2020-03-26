@@ -37,7 +37,7 @@ class ProxyLeakTask implements Runnable
    private ScheduledFuture<?> scheduledFuture;
    private String connectionName;
    private Exception exception;
-   private String threadName; 
+   private String threadName;
    private boolean isLeaked;
 
    static
@@ -67,6 +67,7 @@ class ProxyLeakTask implements Runnable
 
    void schedule(ScheduledExecutorService executorService, long leakDetectionThreshold)
    {
+      // 如果超时内，连接没有归还，那么这个任务会被执行，进行 leak detach
       scheduledFuture = executorService.schedule(this, leakDetectionThreshold, TimeUnit.MILLISECONDS);
    }
 
@@ -76,7 +77,7 @@ class ProxyLeakTask implements Runnable
    {
       isLeaked = true;
 
-      final StackTraceElement[] stackTrace = exception.getStackTrace(); 
+      final StackTraceElement[] stackTrace = exception.getStackTrace();
       final StackTraceElement[] trace = new StackTraceElement[stackTrace.length - 5];
       System.arraycopy(stackTrace, 5, trace, 0, trace.length);
 
@@ -84,6 +85,7 @@ class ProxyLeakTask implements Runnable
       LOGGER.warn("Connection leak detection triggered for {} on thread {}, stack trace follows", connectionName, threadName, exception);
    }
 
+   // ProxyConnection 在 close 的时候，会调用这个方法
    void cancel()
    {
       scheduledFuture.cancel(false);
